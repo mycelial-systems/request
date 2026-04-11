@@ -41,11 +41,11 @@
     }
   },
   "dependencies": {
-    "@substrate-system/keys": "^0.2.33",
-    "@substrate-system/message": "^0.11.3"
+    "@substrate-system/keys": "^0.2.40",
+    "@substrate-system/message": "^0.11.5"
   },
   "devDependencies": {
-    "@substrate-system/tapzero": "^0.10.15",
+    "@substrate-system/tapzero": "^0.10.16",
     "@types/node-localstorage": "^1.3.3",
     "@typescript-eslint/eslint-plugin": "^8.7.0",
     "@typescript-eslint/parser": "^8.7.0",
