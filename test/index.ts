@@ -1,5 +1,5 @@
 import { test } from '@substrate-system/tapzero'
-import ky from 'ky'
+import type ky from 'ky'
 import { EccKeys as Keys } from '@substrate-system/keys/ecc'
 import { LocalStorage } from 'node-localstorage'
 import {
@@ -97,40 +97,28 @@ test('parse header', t => {
 })
 
 let req:typeof ky
+const parsedHeaders:Token<{ seq:number }>[] = []
 test('create instance', async t => {
-    req = SignedRequest(ky, keys.writeKey, 0)
+    req = SignedRequest(createMockKy(request => {
+        parsedHeaders.push(parseHeader(
+            request.headers.get('Authorization') as string
+        ))
+    }), keys.writeKey, 0)
 
-    await req.get('https://example.com/', {
-        hooks: {
-            afterResponse: [
-                (request:Request) => {
-                    const obj = parseHeader(
-                        request.headers.get('Authorization') as string
-                    )
-                    console.log('**header obj**', obj)
-                    t.ok(obj, 'should have an Authorization header in request')
-                    t.equal(obj.seq, 1, 'should have the right sequence')
-                }
-            ]
-        }
-    })
+    await req.get('https://example.com/')
+    const obj = parsedHeaders[0]
+    console.log('**header obj**', obj)
+    t.ok(obj, 'should have an Authorization header in request')
+    t.equal(obj.seq, 1, 'should have the right sequence')
 })
 
 // let parsedToken:Token
 let parsedToken:Token<{ seq:number }>
 test('make another request', async t => {
-    await req.get('https://example.com', {
-        hooks: {
-            afterResponse: [
-                (request:Request) => {
-                    const obj = parsedToken = parseHeader(
-                        request.headers.get('Authorization') as string
-                    )
-                    t.equal(obj.seq, 2, 'should increment the sequence number')
-                }
-            ]
-        }
-    })
+    await req.get('https://example.com')
+    t.equal(parsedHeaders.length, 2, 'should issue a second request')
+    parsedToken = parsedHeaders[1]
+    t.equal(parsedToken.seq, 2, 'should increment the sequence number')
 })
 
 test('verify the header', async t => {
@@ -147,21 +135,15 @@ test('verify an invalid token', async t => {
 test('create an instance with localStorage', async t => {
     const localStorage = new LocalStorage('./test-storage')
     localStorage.setItem('__seq', '3')
-    const req = SignedRequest(ky, keys.writeKey, localStorage)
+    const req = SignedRequest(createMockKy(request => {
+        const obj = parseHeader(
+            request.headers.get('Authorization') as string
+        )
+        t.equal(obj.seq, 4,
+            'should use localStorage to create the sequence')
+    }), keys.writeKey, localStorage)
 
-    await req.get('https://example.com', {
-        hooks: {
-            afterResponse: [
-                (request:Request) => {
-                    const obj = parseHeader(
-                        request.headers.get('Authorization') as string
-                    )
-                    t.equal(obj.seq, 4,
-                        'should use localStorage to create the sequence')
-                }
-            ]
-        }
-    })
+    await req.get('https://example.com')
 
     const seq = localStorage.getItem('__seq')
     t.equal(seq, '4', 'should save the sequence number to localStorage')
@@ -174,22 +156,41 @@ test('verify a parsed token', async t => {
 
 test('create an instance with additional params', async t => {
     const opts = { username: 'alice' }
-    const req = SignedRequest(ky, keys.writeKey, 0, opts)
+    const req = SignedRequest(createMockKy(request => {
+        const obj = parseHeader<typeof opts>(
+            request.headers.get('Authorization') as string
+        )
+        t.ok(obj, 'should have an Authorization header in request')
+        t.equal(obj.seq, 1, 'should have the right sequence')
+        t.equal(obj.username, 'alice',
+            'should have additional properties')
+        t.ok(verifyParsed(obj), 'should validate a valid token')
+    }), keys.writeKey, 0, opts)
 
-    await req.get('https://example.com/', {
-        hooks: {
-            afterResponse: [
-                (request:Request) => {
-                    const obj = parseHeader<typeof opts>(
-                        request.headers.get('Authorization') as string
-                    )
-                    t.ok(obj, 'should have an Authorization header in request')
-                    t.equal(obj.seq, 1, 'should have the right sequence')
-                    t.equal(obj.username, 'alice',
-                        'should have additional properties')
-                    t.ok(verifyParsed(obj), 'should validate a valid token')
-                }
-            ]
-        }
-    })
+    await req.get('https://example.com/')
 })
+
+function createMockKy (onRequest:(request:Request) => void|Promise<void>) {
+    return {
+        create ({ hooks }:{
+            hooks:{
+                beforeRequest:Array<(request:Request) => Promise<void>>
+            }
+        }) {
+            return {
+                async get (url:string) {
+                    const request = new Request(url)
+                    for (const hook of hooks.beforeRequest) {
+                        await hook(request)
+                    }
+
+                    await onRequest(request)
+                    return new Response('', {
+                        status: 200,
+                        headers: { 'content-type': 'text/plain' }
+                    })
+                }
+            }
+        }
+    } as typeof ky
+}
